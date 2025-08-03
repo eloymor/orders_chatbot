@@ -31,19 +31,31 @@ def generate_random_df(start_date: datetime.date,
     ids: list[int] = [id for id in range(n)]
     order_nums: list[int] = [int(f"2025{order:05d}") for order in range(n)]
     items: list[str] = [random.choice(products) for _ in range(n)]
+    quantities: list[int] = [random.randint(1, 10) for _ in range(n)]
+    prices: list[float] = [round(random.uniform(10.00, 1000.00), 2) for _ in range(n)]
     statuses: list[str] = [random.choice(status_options) for _ in range(n)]
     customers: list[str] = [random.choice(customer_names) for _ in range(n)]
+
 
     df = pd.DataFrame(
         {
             "id": ids,
             "order_num": order_nums,
             "item": items,
+            "quantity": quantities,
+            "price": prices,
             "status": statuses,
             "customer_name": customers,
             "order_date": random_dates
         }
     )
+
+    df["total_amount"] = df["price"] * df["quantity"]
+    df["total_amount"] = df["total_amount"].round(2)
+
+    df.loc[df["status"] == "delivered", "shipping_date"] = df["order_date"].apply(
+        lambda x: x + pd.Timedelta(days=random.randint(1, 7)))
+
     return df
 
 

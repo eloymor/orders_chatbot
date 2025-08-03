@@ -2,7 +2,7 @@ import os
 from typing import TypedDict, Optional
 from datetime import datetime
 from dotenv import load_dotenv
-from sqlalchemy import create_engine, Column, Integer, String, Date
+from sqlalchemy import create_engine, Column, Integer, String, Date, Float, func
 from sqlalchemy.orm import sessionmaker, declarative_base
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
@@ -23,14 +23,20 @@ class Order(Base):
     id = Column(Integer, primary_key=True)
     order_num = Column(String)
     item = Column(String)
+    quantity = Column(Integer)
+    price = Column(Float)
     status = Column(String)
     customer_name = Column(String)
     order_date = Column(Date)
+    total_amount = Column(Float)
+    shipping_date = Column(Date, nullable=True)
 
     def __repr__(self):
-        return (f"<Order(order_num='{self.order_num}', item='{self.item}', "
-                f"status='{self.status}', customer_name='{self.customer_name}', "
-                f"'{self.order_date.strftime("%d/%m/%Y")}')>")
+        return (f"<Order(order_num={self.order_num}, item={self.item}, "
+                f"status={self.status}, customer_name={self.customer_name}, "
+                f"{self.order_date.strftime("%d/%m/%Y")})>, "
+                f"quantity={self.quantity}, price={self.price}, total_amount={self.total_amount}, "
+                f"shipping_date={self.shipping_date if self.shipping_date else 'Not yet shipped'})>")
 
 
 Session = sessionmaker(bind=engine)
@@ -50,10 +56,15 @@ def get_order_status(order_num: str) -> str:
             details = (
                 f"Order Number: {order.order_num}\n"
                 f"Item: {order.item}\n"
+                f"Quantity: {order.quantity}\n"
+                f"Price: {order.price}\n"
                 f"Status: {order.status}\n"
                 f"Customer Name: {order.customer_name}\n"
-                f"Order Date: {order.order_date.strftime('%Y-%m-%d') if order.order_date else 'Not yet scheduled'}"
+                f"Order Date: {order.order_date.strftime('%Y-%m-%d') if order.order_date else 'Not yet scheduled'}\n"
+                f"Total Amount: {order.total_amount}"
             )
+            if order.shipping_date:
+                details += f"\nShipping Date: {order.shipping_date.strftime('%Y-%m-%d')}"
             return details
         else:
             return f"Order with {order_num} not found."
@@ -98,6 +109,43 @@ def get_today_orders() -> str:
         session.close()
 
 
+@tool
+def get_lead_time() -> str:
+    """
+    Retrieves the calculated lead time (shipping date - order date) plus the orders details for all delivered orders.
+    :return: str: A string representation of the calculated lead time and delivered orders,
+                    or a message if no orders are found.
+    """
+    session = Session()
+    try:
+        orders_with_lead_time = (
+            session.query(
+                Order.order_num,
+                Order.item,
+                Order.quantity,
+                Order.price,
+                Order.customer_name,
+                (func.julianday(Order.shipping_date) - func.julianday(Order.order_date)).label("lead_time")
+            )
+            .filter(Order.status == 'delivered')
+            .limit(20)
+            .all()
+        )
+        if orders_with_lead_time:
+            details = []
+            for order in orders_with_lead_time:
+                details.append(
+                    f"Order Num: {order.order_num}, Item: {order.item}, Quantity: {order.quantity}, "
+                    f"Price: {order.price}, Customer: {order.customer_name}, Lead time: {order.lead_time}"
+                )
+            return "\n".join(details)
+        else:
+            return "No delivered orders found with shipping date information."
+    finally:
+        session.close()
+
+
+
 class AgentSate(TypedDict):
     chat_history: list[BaseMessage]
     order_num: Optional[str]
@@ -112,6 +160,7 @@ def classify_intent(state: AgentSate) -> AgentSate:
         f"Respond with 'order_status' if they are asking about an order's status or details. "
         f"Respond with 'pending_orders' if they are asking about pending orders. "
         f"Respond with 'today_orders' if they are asking about today's orders. "
+        f"Respond with 'lead_time' if they are asking about the calculated lead time for delivered orders. "
         f"Respond with 'general_query' for any other type of question. "
         f"User query: {last_message.content}"
     )
@@ -159,6 +208,11 @@ def call_today_orders_tool(state: AgentSate) -> AgentSate:
     print(f"Tool returned order details: {today_order_details}")
     return {"order_details": today_order_details}
 
+def call_lead_time_tool(state: AgentSate) -> AgentSate:
+    lead_time_details = get_lead_time.invoke({})
+    print(f"Tool returned order details: {lead_time_details}")
+    return {"order_details": lead_time_details}
+
 
 def generate_response(state: AgentSate) -> AgentSate:
     chat_history = state["chat_history"]
@@ -198,6 +252,15 @@ def generate_response(state: AgentSate) -> AgentSate:
                 f"If the question is no clear, give a summary of the orders placed today to the user. "
                 f"Here are the orders placed today:\n {order_details}."
             )
+    elif intent == "lead_time":
+        if order_details and "no delivered orders found" not in order_details.lower():
+            response_prompt = (
+                f"Based on the following calculated lead time and delivered orders, "
+                f"try to answer the user question: {last_message.content}. "
+                f"If the question is no clear, give a summary of the calculated lead time "
+                f"and delivered orders to the user. "
+                f"Here is the calculated lead time and delivered orders:\n {order_details}."
+            )
 
     else:
         response_prompt = (
@@ -219,6 +282,8 @@ def route_intent(state: AgentSate) -> str:
         return "call_pending_orders_tool"
     elif intent == "today_orders":
         return "call_today_orders_tool"
+    elif intent == "lead_time":
+        return "call_lead_time_tool"
     elif intent == "general_query":
         return "generate_response"
     else:
@@ -232,6 +297,7 @@ workflow.add_node("extract_order_num", extract_order_num)
 workflow.add_node("call_tool_node", call_tool_node)
 workflow.add_node("call_pending_orders_tool", call_pending_orders_tool)
 workflow.add_node("call_today_orders_tool", call_today_orders_tool)
+workflow.add_node("call_lead_time_tool", call_lead_time_tool)
 workflow.add_node("generate_response", generate_response)
 
 workflow.set_entry_point("classify_intent")
@@ -243,6 +309,7 @@ workflow.add_conditional_edges(
         "extract_order_num": "extract_order_num",
         "call_pending_orders_tool": "call_pending_orders_tool",
         "call_today_orders_tool": "call_today_orders_tool",
+        "call_lead_time_tool": "call_lead_time_tool",
         "generate_response": "generate_response"
     }
 )
@@ -251,6 +318,7 @@ workflow.add_edge("extract_order_num", "call_tool_node")
 workflow.add_edge("call_tool_node", "generate_response")
 workflow.add_edge("call_pending_orders_tool", "generate_response")
 workflow.add_edge("call_today_orders_tool", "generate_response")
+workflow.add_edge("call_lead_time_tool", "generate_response")
 workflow.add_edge("generate_response", END)
 
 app = workflow.compile()
