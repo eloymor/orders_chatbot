@@ -26,6 +26,18 @@ def generate_random_dates(start_date: datetime.date,
 def generate_random_df(start_date: datetime.date,
                        end_date: datetime.date,
                        n: int) -> pd.DataFrame:
+
+    if n > 1_000_000:
+        raise ValueError("n cannot be greater than 1,000,000")
+    elif n < 1:
+        raise ValueError("n must be at least 1")
+
+    if start_date > end_date:
+        raise ValueError("start_date cannot be after end_date")
+    elif start_date == end_date:
+        raise ValueError("start_date and end_date cannot be the same")
+
+
     random_dates: list[datetime.date] = generate_random_dates(start_date, end_date, n)
 
     ids: list[int] = [id for id in range(n)]

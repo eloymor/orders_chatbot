@@ -42,7 +42,7 @@ st.markdown("""
 
 # App title
 st.title("Orders Chatbot")
-st.markdown("Ask about your orders or any general questions!")
+st.markdown("Ask about your orders or request statistics about them!")
 
 # Initialize chat history in session state if it doesn't exist
 if "chat_history" not in st.session_state:

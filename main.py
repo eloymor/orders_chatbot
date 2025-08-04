@@ -264,8 +264,12 @@ def generate_response(state: AgentSate) -> AgentSate:
 
     else:
         response_prompt = (
-            f"You are a helpful assistant. Respond to the following general query: "
-            f"{last_message.content}"
+            f"You are a helpful assistant. "
+            f"Please inform the user that you can only help him with the following topics: "
+            f"Get the details of a particular order, "
+            f"Get the details of the pending orders, "
+            f"Get the details of today's orders, "
+            f"Get the effective lead time of the shipped orders."
         )
 
     ai_response = llm.invoke(response_prompt)
