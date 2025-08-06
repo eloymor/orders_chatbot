@@ -1,6 +1,6 @@
 # Orders Chatbot
 
-This project is a chatbot application built with Streamlit and LangGraph and LangChain. It allows users to inquire about order 
+This project is a chatbot application built with Streamlit, LangGraph, and LangChain. It allows users to inquire about order 
 information from a SQLite database. The chatbot can understand different user intents, such as checking an order's 
 status, listing all pending orders, or retrieving orders from the current day.
 
@@ -27,6 +27,8 @@ as the LLM only is used for its understanding of the language.
 - Check the status of a specific order by providing an order number.
 - Get a list of all pending orders.
 - Get a list of all orders placed today.
+- Get a list of the lead time for delivered orders.
+- You can ask for a summary or a detailed report of any of the previous queries.
 - Simple and intuitive web interface powered by Streamlit.
 
 ## How it Works
