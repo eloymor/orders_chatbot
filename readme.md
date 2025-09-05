@@ -29,6 +29,7 @@ as the LLM only is used for its understanding of the language.
 - Get a list of all orders placed today.
 - Get a list of the lead time for delivered orders.
 - You can ask for a summary or a detailed report of any of the previous queries.
+- Retrieve data from the vector store (RAG).
 - Simple and intuitive web interface powered by Streamlit.
 
 ## How it Works
@@ -52,18 +53,30 @@ Follow these steps to get the project running locally.
     venv\Scripts\activate
     # On macOS/Linux
     source venv/bin/activate
-    ```
+    ``` 
 
 3.  **Install dependencies:**
     ```bash
     pip install -r requirements.txt
     ```
 
-4.  **Set up environment variables:**
+    **For UV installation (virtual env + requirements):**
+    ```bash
+    uv sync
+    ```
+
+4.  **Set up environment variables if you are going to use the Gemini LLM:**
     Create a `.env` file in the root directory and add your Google API key. This is required for the chatbot's language model.
     ```
     GOOGLE_API_KEY="your_google_api_key"
     ```
+    **Note:** You can get a free API key from [Google AI Studio](https://aistudio.google.com/apikey).
+
+    **For Ollama local LLM:**
+    ```bash
+    ollama pull qwen3:4b-instruct-2507-q8_0
+    ```
+    
 
 5.  **Populate the database:**
     Run the following command to create the `orders.db` file and populate it with 1,000,000 sample orders.
@@ -90,6 +103,7 @@ Follow these steps to get the project running locally.
 -   `app.py`: The main Streamlit application file that creates the user interface.
 -   `main.py`: Contains the core chatbot logic using LangChain and LangGraph to process user input and interact with the database.
 -   `populate_db.py`: A script to generate sample data and populate the `orders.db` SQLite database.
+-   `populate_RAG.py`: A script to create a vector store (RAG) from the `data/**txt` files. 
 -   `requirements.txt`: A list of all the Python packages required to run the project.
 -   `.env`: Configuration file for environment variables (you need to create this).
 -   `orders.db`: The SQLite database file (created after running `populate_db.py`).

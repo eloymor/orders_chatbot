@@ -5,17 +5,20 @@ from dotenv import load_dotenv
 from sqlalchemy import create_engine, Column, Integer, String, Date, Float, func
 from sqlalchemy.orm import sessionmaker, declarative_base
 from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_ollama import ChatOllama
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
 from langchain_core.messages.utils import trim_messages
 from langgraph.graph import StateGraph, END
 from langchain_core.tools import tool
+from populate_RAG import get_vector_store, query_vector_store
 
 # load variables inside .env file to environment
 load_dotenv()
 
 # initialize the llm model
 api_key: str = os.getenv("GOOGLE_API_KEY")
-llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash-lite", temperature=0, api_key=api_key)
+# llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash-lite", temperature=0, api_key=api_key)
+llm = ChatOllama(model="qwen3:4b-instruct-2507-q8_0", temperature=0, validate_model_on_init=True)
 
 # SQLite DB connection
 engine = create_engine('sqlite:///orders.db')
@@ -154,16 +157,36 @@ def get_lead_time() -> str:
     finally:
         session.close()
 
+@tool
+def get_product_info(product_name: str) -> str:
+    """
+    Get product information from a vector store to answer the user's query.
+    :param product_name: The name of the product to search for.
+    :return: The product information.
+    """
+
+    embedding_model = os.environ.get("RAG_EMBED_MODEL", "granite-embedding:278m")
+    vector_store = get_vector_store(persist_dir="chroma_db",
+                                    collection_name="products",
+                                    embedding_model=embedding_model)
+    retrieved_data = vector_store.similarity_search(product_name, k=1)
+    if not retrieved_data:
+        product_info = "No product found with this name."
+    else:
+        product_info = retrieved_data[0].page_content
+    return product_info
 
 # Create the Agent state which will store some variables and go through all the graph steps
-class AgentSate(TypedDict):
+class AgentState(TypedDict):
     chat_history: list[BaseMessage]
     order_num: Optional[str]
     order_details: Optional[str]
     intent: Optional[str]
+    product_name: Optional[str]
+    product_info: Optional[str]
 
 # First node, will be the entry point to the graph
-def classify_intent(state: AgentSate) -> AgentSate:
+def classify_intent(state: AgentState) -> AgentState:
     """
     Analyzes the last message from the chat history in the given state and determines
     the user's primary intent based on predefined categories. The identified intent
@@ -181,6 +204,7 @@ def classify_intent(state: AgentSate) -> AgentSate:
         f"Respond with 'pending_orders' if they are asking about pending orders. "
         f"Respond with 'today_orders' if they are asking about today's orders. "
         f"Respond with 'lead_time' if they are asking about the calculated lead time for delivered orders. "
+        f"Respond with 'product_info' if they are asking about a product information. "
         f"Respond with 'general_query' for any other type of question. "
         f"User query: {last_message.content}"
     )
@@ -191,7 +215,7 @@ def classify_intent(state: AgentSate) -> AgentSate:
 
 
 # Conditional node
-def extract_order_num(state: AgentSate) -> AgentSate:
+def extract_order_num(state: AgentState) -> AgentState:
     """
     Extracts the order number from the last user query in the chat history of
     the given `AgentSate` object.
@@ -223,7 +247,7 @@ def extract_order_num(state: AgentSate) -> AgentSate:
     return {"order_num": order_num}
 
 
-def call_tool_node(state: AgentSate) -> AgentSate:
+def call_tool_node(state: AgentState) -> AgentState:
     """
     Calls the tool node to fetch order details based on the provided agent state.
 
@@ -246,7 +270,7 @@ def call_tool_node(state: AgentSate) -> AgentSate:
         return {"order_details": "No order number found."}
 
 
-def call_pending_orders_tool(state: AgentSate) -> AgentSate:
+def call_pending_orders_tool(state: AgentState) -> AgentState:
     """
     Call the pending orders tool and retrieve order details.
 
@@ -262,7 +286,7 @@ def call_pending_orders_tool(state: AgentSate) -> AgentSate:
     return {"order_details": pending_order_details}
 
 
-def call_today_orders_tool(state: AgentSate) -> AgentSate:
+def call_today_orders_tool(state: AgentState) -> AgentState:
     """
     Calls a tool to fetch today's order details and updates the agent state with
     the retrieved data.
@@ -275,7 +299,7 @@ def call_today_orders_tool(state: AgentSate) -> AgentSate:
     return {"order_details": today_order_details}
 
 
-def call_lead_time_tool(state: AgentSate) -> AgentSate:
+def call_lead_time_tool(state: AgentState) -> AgentState:
     """
     Call the lead time tool for processing and retrieving order details. This function
     invokes the `get_lead_time` tool and returns the results as part of the state.
@@ -288,8 +312,46 @@ def call_lead_time_tool(state: AgentSate) -> AgentSate:
     print(f"Tool returned order details: {lead_time_details}")
     return {"order_details": lead_time_details}
 
+# Conditional node
+def extract_product_type(state: AgentState) -> AgentState:
+    last_message = state["chat_history"][-1]
+    prompt = (
+        f"Extract the type of product that the user wants to know. "
+        f"Examples of products types: "
+        f"computer, gpu, router, laptop, Smartphone, Headphones, Monitor. "
+        f"If no clear product name is found, return 'None'. "
+        f"User query: {last_message.content}"
+    )
+    response = llm.invoke(prompt)
+    response_text = response.content.strip() if hasattr(response, "content") else str(response).strip()
+    if response_text.strip("\"'").lower() == "none":
+        product_name = None
+    else:
+        product_name = response_text
+    print(f"Extracted product name: {product_name}")
+    return {"product_name": product_name}
 
-def generate_response(state: AgentSate) -> AgentSate:
+
+def call_product_info(state: AgentState) -> AgentState:
+    """
+    Call the product info tool for processing and retrieving product details. This function
+    invokes the `get_product_info` tool and returns the results as part of the state.
+
+    :param product_name: The name of the product to retrieve information for.
+    :return: The updated state of type AgentState containing `product_info` retrieved
+        from the product info tool.
+    """
+    product_name = state.get("product_name")
+    if not product_name:
+        msg = "No product name provided. Please specify the product you are interested in."
+        print(f"Tool skipped: {msg}")
+        return {"product_info": msg}
+    product_info = get_product_info.invoke({"product_name": product_name})
+    print(f"Tool returned product info: {product_info}")
+    return {"product_info": product_info}
+
+
+def generate_response(state: AgentState) -> AgentState:
     """
     Generates a response based on the user's intent and provided details, using a prompt-driven AI model.
     The method tailors the generated response according to the user's query by utilizing the state of the conversation,
@@ -309,6 +371,7 @@ def generate_response(state: AgentSate) -> AgentSate:
     last_message = chat_history[-1]
     intent = state.get("intent")
     order_details = state.get("order_details")
+    product_info = state.get("product_info")
     order_num = state.get("order_num")
     if intent == "order_status":
         if order_details and "not found" not in order_details.lower() and "error" not in order_details.lower():
@@ -351,7 +414,13 @@ def generate_response(state: AgentSate) -> AgentSate:
                 f"and delivered orders to the user. "
                 f"Here is the calculated lead time and delivered orders:\n {order_details}."
             )
-
+    elif intent == "product_info":
+        if product_info:
+            response_prompt = (
+                f"Based on the following product information, try to answer the user question: {last_message.content}. "
+                f"If the question is no clear, ask the user to rephrase the question. "
+                f"Here is the product information:\n {product_info}"
+            )
     else:
         response_prompt = (
             f"You are a helpful assistant. "
@@ -360,15 +429,17 @@ def generate_response(state: AgentSate) -> AgentSate:
             f"Get the details of the pending orders, "
             f"Get the details of today's orders, "
             f"Get the effective lead time of the shipped orders."
+            f"Get the product information."
         )
 
     ai_response = llm.invoke(response_prompt)
     new_chat_history = chat_history + [AIMessage(content=ai_response.content)]
+    num_tokens = ai_response.response_metadata["eval_count"]
 
     # We have to trim the chat history so it doesn't exceed the maximum context window of the LLM
     trimmed_chat_history = trim_messages(
         new_chat_history,
-        max_tokens=800_000, # Gemini has around 1_000_000 token window
+        max_tokens=30_000, # Gemma3 has around 32_000 context windows
         token_counter=llm,
         strategy="last", # We will keep only the most recent messages
         include_system=True # also delete the old system messages
@@ -377,7 +448,7 @@ def generate_response(state: AgentSate) -> AgentSate:
     return {"chat_history": trimmed_chat_history}
 
 
-def route_intent(state: AgentSate) -> str:
+def route_intent(state: AgentState) -> str:
     """
     Routes the current intent within the agent's state to the appropriate action or tool. Based on the
     provided intent, this function determines and returns a string identifier representing the next
@@ -396,6 +467,8 @@ def route_intent(state: AgentSate) -> str:
         return "call_today_orders_tool"
     elif intent == "lead_time":
         return "call_lead_time_tool"
+    elif intent == "product_info":
+        return "extract_product_type"
     elif intent == "general_query":
         return "generate_response"
     else:
@@ -403,9 +476,8 @@ def route_intent(state: AgentSate) -> str:
 
 
 
-
 # Init the graph (we will use the StateGraph type)
-workflow = StateGraph(AgentSate)
+workflow = StateGraph(AgentState)
 
 # Add all the nodes to the graph:
 workflow.add_node("classify_intent", classify_intent)
@@ -415,6 +487,8 @@ workflow.add_node("call_pending_orders_tool", call_pending_orders_tool)
 workflow.add_node("call_today_orders_tool", call_today_orders_tool)
 workflow.add_node("call_lead_time_tool", call_lead_time_tool)
 workflow.add_node("generate_response", generate_response)
+workflow.add_node("extract_product_type", extract_product_type)
+workflow.add_node("call_product_info", call_product_info)
 
 # We set the classifier as the entry point
 workflow.set_entry_point("classify_intent")
@@ -428,6 +502,8 @@ workflow.add_conditional_edges(
         "call_pending_orders_tool": "call_pending_orders_tool",
         "call_today_orders_tool": "call_today_orders_tool",
         "call_lead_time_tool": "call_lead_time_tool",
+        "extract_product_type": "extract_product_type",
+        "call_product_info": "call_product_info",
         "generate_response": "generate_response"
     }
 )
@@ -438,6 +514,8 @@ workflow.add_edge("call_tool_node", "generate_response")
 workflow.add_edge("call_pending_orders_tool", "generate_response")
 workflow.add_edge("call_today_orders_tool", "generate_response")
 workflow.add_edge("call_lead_time_tool", "generate_response")
+workflow.add_edge("extract_product_type", "call_product_info")
+workflow.add_edge("call_product_info", "generate_response")
 workflow.add_edge("generate_response", END)
 
 # Compile the graph
