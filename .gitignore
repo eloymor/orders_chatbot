@@ -1,6 +1,7 @@
 .venv/
 .idea/
 __pycache__/
+chroma_db/
 *.env
 *.db
 *.ipynb
