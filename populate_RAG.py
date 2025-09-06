@@ -1,4 +1,5 @@
 import os
+import shutil
 from pathlib import Path
 from typing import List
 from langchain_ollama import OllamaEmbeddings
@@ -42,12 +43,11 @@ def load_documents(directory: str) -> List[str]:
 
     return text_docs + md_docs + pdf_docs
 
-def split_documents(documents: List[str], chunk_size: int = 1000, chunk_overlap: int = 200) -> List[str]:
+def split_documents(documents: List[str], chunk_size: int = 800, chunk_overlap: int = 80) -> List[str]:
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=chunk_size,
                                                    chunk_overlap=chunk_overlap,
                                                    length_function=len,
-                                                   is_separator_regex=True,
-                                                   separators=["\n\n", "\n", ".", "!", "?", " ", "#", "##", "###"])
+                                                   is_separator_regex=False)
     split_documents = text_splitter.split_documents(documents)
 
     return split_documents
@@ -84,15 +84,19 @@ def query_vector_store(vector_store: Chroma, query: str, k: int = 5) -> List[dic
 def main():
     input_docs_dir = os.environ.get("RAG_INPUT_DIR", "data")
     persist_dir = os.environ.get("RAG_CHROMA_DIR", "chroma_db")
-    collection_name = os.environ.get("RAG_COLLECTION", "docs")
+    collection_name = os.environ.get("RAG_COLLECTION", "products")
     embedding_model = os.environ.get("RAG_EMBED_MODEL", "granite-embedding:278m")
+
+    if os.path.exists(persist_dir):
+        shutil.rmtree(persist_dir)
+        print(f"Directory removed: {persist_dir}")
 
     print(f"Loading raw documents from: {input_docs_dir}")
     raw_docs = load_documents(input_docs_dir)
     print(f"Loaded {len(raw_docs)} raw documents")
 
     print("Splitting documents into chunks...")
-    chunks = split_documents(raw_docs, chunk_size=1000, chunk_overlap=150)
+    chunks = split_documents(raw_docs, chunk_size=800, chunk_overlap=80)
     print(f"Produced {len(chunks)} chunks")
 
     print("Building and persisting Chroma vector store...")

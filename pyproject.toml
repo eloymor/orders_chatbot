@@ -8,6 +8,7 @@ dependencies = [
     "langchain-chroma>=0.2.5",
     "langchain-community>=0.3.29",
     "langchain-ollama>=0.3.7",
+    "notebook>=7.4.5",
     "pandas-stubs==2.3.2.250827",
     "pypdf>=6.0.0",
     "transformers>=4.56.1",

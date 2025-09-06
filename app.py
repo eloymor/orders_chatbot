@@ -98,16 +98,30 @@ if user_input:
         final_state = None
         for s in chatbot_app.stream({"chat_history": st.session_state.chat_history}):
             final_state = s
-        
+
+
+        def _stream_chunks(text: str, chunk_size: int = 20):
+            for i in range(0, len(text), chunk_size):
+                yield text[i:i + chunk_size]
+
+
         if final_state and "generate_response" in final_state:
             updated_chat_history = final_state["generate_response"]["chat_history"]
-            # Add AI response to chat history
+
+            # Stream the last AI message progressively to the UI
+            last_ai_message = updated_chat_history[-1] if updated_chat_history else None
+            if isinstance(last_ai_message, AIMessage):
+                with st.chat_message("assistant"):
+                    st.write_stream(_stream_chunks(last_ai_message.content, chunk_size=32))
+
+            # Persist the full chat history after streaming
             st.session_state.chat_history = updated_chat_history
-            
-            # Force a rerun to display the new message
+
+            # Force a rerun to render the message in the styled bubbles as well
             st.rerun()
         else:
-            st.session_state.chat_history.append(AIMessage(content="Sorry, I didn't understand that. Please try again."))
+            st.session_state.chat_history.append(
+                AIMessage(content="Sorry, I didn't understand that. Please try again."))
             st.session_state.chat_history.pop(-2)  # Remove the user message that caused the error
             st.rerun()
 

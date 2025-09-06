@@ -15,10 +15,16 @@ from populate_RAG import get_vector_store, query_vector_store
 # load variables inside .env file to environment
 load_dotenv()
 
-# initialize the llm model
-api_key: str = os.getenv("GOOGLE_API_KEY")
+# initialize the llm models
+
+# uncomment to use Gemini
+# api_key: str = os.getenv("GOOGLE_API_KEY") # Gemini works well in all this project with low temperature
 # llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash-lite", temperature=0, api_key=api_key)
-llm = ChatOllama(model="qwen3:4b-instruct-2507-q8_0", temperature=0, validate_model_on_init=True)
+
+# Low temperature model
+llm_lt = ChatOllama(model="qwen3:4b-instruct-2507-q8_0", temperature=0, validate_model_on_init=True)
+# High temperature model
+llm_ht = ChatOllama(model="qwen3:4b-instruct-2507-q8_0", temperature=0.7, validate_model_on_init=True)
 
 # SQLite DB connection
 engine = create_engine('sqlite:///orders.db')
@@ -169,7 +175,7 @@ def get_product_info(product_name: str) -> str:
     vector_store = get_vector_store(persist_dir="chroma_db",
                                     collection_name="products",
                                     embedding_model=embedding_model)
-    retrieved_data = vector_store.similarity_search(product_name, k=1)
+    retrieved_data = vector_store.similarity_search(product_name, k=2)
     if not retrieved_data:
         product_info = "No product found with this name."
     else:
@@ -208,7 +214,7 @@ def classify_intent(state: AgentState) -> AgentState:
         f"Respond with 'general_query' for any other type of question. "
         f"User query: {last_message.content}"
     )
-    response = llm.invoke(prompt)
+    response = llm_lt.invoke(prompt)
     intent = response.content.strip().lower()
     print(f"Classified intent: {intent}")
     return {"intent": intent}
@@ -239,7 +245,7 @@ def extract_order_num(state: AgentState) -> AgentState:
         f"If no clear order number is found, return 'None'. "
         f"User query: {last_message.content}"
     )
-    response = llm.invoke(prompt)
+    response = llm_lt.invoke(prompt)
     order_num = response.content.strip()
     if order_num.lower() == "none":
         order_num = None
@@ -322,7 +328,7 @@ def extract_product_type(state: AgentState) -> AgentState:
         f"If no clear product name is found, return 'None'. "
         f"User query: {last_message.content}"
     )
-    response = llm.invoke(prompt)
+    response = llm_lt.invoke(prompt)
     response_text = response.content.strip() if hasattr(response, "content") else str(response).strip()
     if response_text.strip("\"'").lower() == "none":
         product_name = None
@@ -432,15 +438,14 @@ def generate_response(state: AgentState) -> AgentState:
             f"Get the product information."
         )
 
-    ai_response = llm.invoke(response_prompt)
+    ai_response = llm_ht.invoke(response_prompt)
     new_chat_history = chat_history + [AIMessage(content=ai_response.content)]
-    num_tokens = ai_response.response_metadata["eval_count"]
 
     # We have to trim the chat history so it doesn't exceed the maximum context window of the LLM
     trimmed_chat_history = trim_messages(
         new_chat_history,
-        max_tokens=30_000, # Gemma3 has around 32_000 context windows
-        token_counter=llm,
+        max_tokens=30_000, # Qwen3 has around 32_000 context windows
+        token_counter=llm_lt,
         strategy="last", # We will keep only the most recent messages
         include_system=True # also delete the old system messages
     )
